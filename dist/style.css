@@ -7,3 +7,20 @@
 .bulk-actions{padding:0 24px 16px}.bulk-actions button{white-space:normal;text-align:left}
 
 .load-status{padding:12px 14px;border-radius:6px;background:#f1f4fa;color:#52627a;font-size:14px;margin:12px 0 0;line-height:1.6}.load-status[data-state="loading"]{background:#eaf0ff;color:#244bc1}.load-status[data-state="success"]{background:#e9f7ee;color:#19683d}.load-status[data-state="error"]{background:#fff0e7;color:#933b16;border:1px solid #efc1a1}#resultsSection{scroll-margin-top:20px}
+
+/* Keep live progress separate from surrounding explanatory text. */
+.ai-panel{min-width:0;overflow-wrap:anywhere}
+.ai-panel>label,.ai-panel>div,.ai-panel>p{position:relative;min-width:0}
+.ai-panel>p{height:auto;overflow:visible;line-height:1.75}
+.ai-actions,.input-bottom>div{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}
+.ai-actions button,.input-bottom button{white-space:normal;line-height:1.6}
+#workerStatus{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:16px 0;line-height:1.7}
+#workerStatus:empty{display:none}
+.worker-card{background:#f4f7fc;border:1px solid var(--border);border-radius:8px;padding:12px;min-width:0}
+.worker-card strong,.worker-card span{display:block;overflow-wrap:anywhere}
+.worker-card span{margin-top:4px;white-space:pre-wrap}
+#aiStatus,#runUsage{padding:12px 14px;background:#f4f7fc;border-radius:6px;font-variant-numeric:tabular-nums}
+#aiProgress{display:block;height:12px;margin:18px 0 12px}
+td>.warning{display:block;margin-top:8px;overflow-wrap:anywhere}
+.ai-panel a{display:inline-block;white-space:nowrap}
+@media(max-width:650px){#workerStatus{grid-template-columns:1fr}.ai-actions{flex-direction:column}.key-row span{min-width:0;flex-basis:100%}}
