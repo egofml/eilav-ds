@@ -23,5 +23,5 @@ test('format retry splits once, preserves IDs and stops repeated errors without 
  const items=Array.from({length:23},(_,id)=>({id})),seen=[],sizes=[];
  await Batch.run({items,request:async b=>{sizes.push(b.length);if(b.length>5)throw Object.assign(Error(),{code:'AI_FORMAT'});return b;},apply:b=>seen.push(...b),wait:async()=>{}});
  assert.deepEqual(sizes,[20,5,5,5,5,3]);assert.deepEqual(seen,items);
- let calls=0,applied=0;await assert.rejects(()=>Batch.run({items,request:async()=>{calls++;throw Object.assign(Error('bad'),{code:'AI_FORMAT'});},apply:()=>applied++,wait:async()=>{}}),/bad/);assert.equal(calls,2);assert.equal(applied,0);
+ let calls=0,applied=0,failed=[];const result=await Batch.run({items,request:async()=>{calls++;throw Object.assign(Error('bad'),{code:'AI_FORMAT'});},apply:()=>applied++,onFailure:item=>failed.push(item.id),wait:async()=>{}});assert.equal(result.completed,0);assert.equal(result.failed,23);assert.equal(calls,29);assert.equal(applied,0);assert.deepEqual(failed,items.map(x=>x.id));
 });
