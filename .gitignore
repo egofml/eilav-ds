@@ -13,7 +13,7 @@ node_modules/
 .venv/
 __pycache__/
 *.pyc
-dist/
+.sites-runtime/
 build/
 .DS_Store
 Thumbs.db
