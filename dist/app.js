@@ -55,7 +55,7 @@ $('aiCheck').onclick=run(async()=>{
  request:batch=>keyPool.execute(key=>DSGemini.check({key,model:requestModel,items:batch,onUsage:metadata=>keyPool.recordUsage(key,metadata)}),{fallback}),
  apply:results=>{const next=results.map(result=>DS.applyKeywordReview(rows[result.id],result.keywords,position));for(const row of next)rows[row.index]=row;revision++;expectedRevision=revision;renderKeys();render();},
  progress:(done,total)=>{completed=done;$('aiProgress').value=done;$('aiStatus').textContent='이번 실행 '+done.toLocaleString()+' / '+total.toLocaleString()+'개 완료 · 전체 미검토 '+DSBatch.pending(rows).length.toLocaleString()+'개';}
- });$('aiStatus').textContent=(outcome.stopped?'중지됨':'전체 AI 위치 판단 완료')+' · 이번 실행 '+completed.toLocaleString()+'개 완료. '+(outcome.stopped?'시작 / 이어하기를 누르면 남은 상품부터 처리합니다.':'의심·불확실하거나 자연스러운 중간 위치가 없는 후보를 제외했습니다. 일괄 적용을 누르면 AI 삽입 결과를 반영합니다.');
+ });$('aiStatus').textContent=(outcome.stopped?'중지됨':'전체 AI 위치 판단 완료')+' · 이번 실행 '+completed.toLocaleString()+'개 완료. '+(outcome.stopped?'시작 / 이어하기를 누르면 남은 상품부터 처리합니다.':'의심·불확실하거나 자연스러운 삽입 위치가 없는 후보를 제외했습니다. 일괄 적용을 누르면 AI 삽입 결과를 반영합니다.');
  }catch(e){$('aiStatus').textContent='검토 중지 · '+completed.toLocaleString()+'개 완료한 결과는 유지됩니다. '+e.message+' 원인을 해결한 뒤 시작 / 이어하기를 누르세요.';notice('전체 검토가 중지됐습니다. Gemini 영역에서 진행 상황과 오류를 확인해주세요.',true);
  }finally{aiBusy=false;$('aiStop').disabled=true;renderKeys();render();}
 });
