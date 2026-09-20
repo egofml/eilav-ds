@@ -5,3 +5,5 @@
 .key-list{margin:16px 0}.key-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid var(--border);padding:10px;margin:7px 0;border-radius:5px;font-size:13px}.key-row span{flex:1;min-width:200px}.key-row button{padding:5px 9px}#addKey{margin-top:12px}
 
 .bulk-actions{padding:0 24px 16px}.bulk-actions button{white-space:normal;text-align:left}
+
+.load-status{padding:12px 14px;border-radius:6px;background:#f1f4fa;color:#52627a;font-size:14px;margin:12px 0 0;line-height:1.6}.load-status[data-state="loading"]{background:#eaf0ff;color:#244bc1}.load-status[data-state="success"]{background:#e9f7ee;color:#19683d}.load-status[data-state="error"]{background:#fff0e7;color:#933b16;border:1px solid #efc1a1}#resultsSection{scroll-margin-top:20px}
