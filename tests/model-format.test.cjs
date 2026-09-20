@@ -14,7 +14,7 @@ test('auto follows pagination and next start notices retired model; manual never
 });
 test('JSON schema request handles fenced valid response, flags truncation and malformed content',async()=>{
  const items=[{id:0,title:'주방 수납 바구니',candidates:['정리용']}],result=[{id:0,keywords:[{keyword:'정리용',status:'no_obvious_issue',reason:'용도',afterWord:1}]}];
- const run=(text,finishReason='STOP')=>G.check({key:'fake',model:'gemini-test',items,fetcher:async(url,opts)=>{const config=JSON.parse(opts.body).generationConfig;assert.equal(config.responseSchema.minItems,1);assert.equal(config.responseMimeType,'application/json');return{ok:true,json:async()=>({candidates:[{finishReason,content:{parts:[{text}]}}]})};}});
+ const run=(text,finishReason='STOP')=>G.check({key:'fake',model:'gemini-test',items,fetcher:async(url,opts)=>{const config=JSON.parse(opts.body).generationConfig;assert.equal(config.responseSchema.minItems,undefined);assert.equal(config.responseMimeType,'application/json');return{ok:true,json:async()=>({candidates:[{finishReason,content:{parts:[{text}]}}]})};}});
  assert.deepEqual(await run('```json\n'+JSON.stringify(result)+'\n```'),result);
  for(const [text,finish] of [['[','STOP'],['[','MAX_TOKENS'],['[]','STOP']])await assert.rejects(()=>run(text,finish),e=>e.code==='AI_FORMAT');
  await assert.rejects(()=>run('', 'SAFETY'),e=>e.code!=='AI_FORMAT');
