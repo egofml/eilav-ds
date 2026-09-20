@@ -1,0 +1,19 @@
+# User-specific settings, credentials, sessions and business data
+local/
+.env
+.env.*
+!.env.example
+credentials/
+secrets/
+.auth/
+*.log
+
+# Generated dependencies and build outputs
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+.DS_Store
+Thumbs.db
