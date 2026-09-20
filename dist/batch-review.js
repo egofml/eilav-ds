@@ -15,5 +15,26 @@ async function run({items,request,apply,stopped=()=>false,valid=()=>true,progres
  }
  return {completed,failed,stopped:false};
 }
-const api={pending,run};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DSBatch=api;
+async function parallel(options){
+ const {items,workers,request,apply,onFailure=()=>{},progress=()=>{},onWorker=()=>{},fallback=true,stopped=()=>false,valid=()=>true,batchSize=20,delay=1500,wait=ms=>new Promise(resolve=>setTimeout(resolve,ms))}=options;
+ if(!Array.isArray(workers)||!workers.length||workers.length>4||new Set(workers).size!==workers.length||![10,20,40].includes(batchSize))throw Error('병렬 작업자 설정을 확인해주세요.');
+ const queue=[];for(let i=0;i<items.length;i+=batchSize)queue.push(items.slice(i,i+batchSize));
+ const settled=new Set();let completed=0,failed=0,halt=false,inFlight=0;const errors=[],waiters=[];const wake=()=>{for(const resolve of waiters.splice(0))resolve();};
+ const report=()=>progress(completed,items.length,failed);
+ await Promise.all(workers.map(async worker=>{
+  while(!halt&&!stopped()&&valid()){
+   if(!queue.length){if(!inFlight)break;await new Promise(resolve=>waiters.push(resolve));continue;}
+   const batch=queue.shift();inFlight++;onWorker(worker,'검토 중 · '+batch.length+'개');
+   try{await run({...options,items:batch,wait,stopped:()=>halt||stopped(),request:b=>request(b,worker),
+    apply:results=>{const fresh=results.filter(r=>!settled.has(r.id));apply(fresh);for(const r of fresh)settled.add(r.id);completed+=fresh.length;report();},
+    onFailure:(item,e)=>{if(!settled.has(item.id)){onFailure(item,e);settled.add(item.id);failed++;report();}},progress:()=>{}});
+   }catch(e){errors.push({worker,message:e.message});onWorker(worker,'중지 · '+e.message);const remaining=batch.filter(x=>!settled.has(x.id));if(remaining.length)queue.unshift(remaining);if(!fallback||!valid())halt=true;return;}finally{inFlight--;wake();}
+   onWorker(worker,'대기');if(queue.length&&!halt&&!stopped())await wait(delay);
+  }
+  onWorker(worker,'완료 또는 대기 종료');
+ }));
+ if(!valid())throw Error('표나 규칙이 변경되어 병렬 검토를 중지했습니다.');
+ return {completed,failed,remaining:items.length-settled.size,stopped:stopped()||halt||settled.size<items.length,errors};
+}
+const api={pending,run,parallel};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DSBatch=api;
 })(typeof window==='undefined'?globalThis:window);

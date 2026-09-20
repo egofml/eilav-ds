@@ -1,4 +1,10 @@
 const test=require('node:test'),assert=require('node:assert/strict'),DS=require('../dist/core.js'),Batch=require('../dist/batch-review.js');
+test('general age notices retain each matched reason without confusing quantities',()=>{
+ const table={names:['상품명','키워드','상세정보']};
+ const reasons=DS.exclusionReasons(table,['놀이 만 8세 이상 / 15세 이하 사용금지','3살부터','<p>36개월 미만 사용 불가</p>']);
+ assert.equal(reasons.length,4);assert(reasons.some(r=>r.includes('만 8세 이상')));assert(reasons.some(r=>r.includes('상세정보 · 36개월 미만 사용 불가')));
+ for(const value of ['14개 이상','3세트 이상','114세 이상','3.14세 이상','140cm 이상'])assert.deepEqual(DS.exclusionReasons({names:['상품명']},[value]),[]);
+});
 test('age exclusion runs before forbidden removal and retains original aligned row',()=>{
  const headers=['상품코드','상품명','키워드','배송비','반품배송비','상세정보'];
  const source=[['001','장난감 (만 14세 이상 사용)','정리용','3000','6000',''],['002','수납함','정리용','3000','6000',''],['003','모형','취미용','0','6000','<p>만 １４ 세&nbsp;이상</p>']];
