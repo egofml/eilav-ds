@@ -1,11 +1,11 @@
 (function(root){'use strict';
-function encode({source,options,rows}){return {version:1,source,options,edits:rows.map(r=>({checks:r.keywordChecks||[],status:r.status,name:r.approvedName,evidence:r.evidence||'',error:r.aiError})),savedAt:new Date().toISOString()};}
+function encode({source,options,rows}){return {version:1,source,options,edits:rows.map(r=>({checks:r.keywordChecks||[],spacingTitle:r.spacingTitle,status:r.status,name:r.approvedName,evidence:r.evidence||'',error:r.aiError})),savedAt:new Date().toISOString()};}
 function decode(data,DS,G){
  if(data?.version!==1||typeof data.source!=='string'||!Array.isArray(data.edits))throw Error('지원하지 않는 작업 저장 형식입니다.');
  const o=data.options;if(!o||!Array.isArray(o.terms)||o.terms.length>20000||o.terms.some(t=>typeof t!=='string'||t.length>200)||o.position!=='ai'||typeof o.includeZero!=='boolean')throw Error('저장된 수정 규칙이 올바르지 않습니다.');
  const table=DS.tableFrom(data.source);let rows=DS.analyze(table,o);if(rows.length!==data.edits.length)throw Error('저장된 행 수가 다릅니다.');
  const matcher=DS.makeMatcher(o.terms);rows=rows.map((row,i)=>{const edit=data.edits[i];if(!edit||!Array.isArray(edit.checks))throw Error('저장된 검토 형식이 다릅니다.');if(row.blank||row.exclusion?.length)return row;
- if(edit.checks.length){const result=G.validateResult([{id:i,keywords:edit.checks}],[{id:i,title:row.cleaned,candidates:row.candidates}]);row=DS.applyKeywordReview(row,result[0].keywords,'ai');}
+ if(edit.checks.length){const result=G.validateResult([{id:i,keywords:edit.checks,spacingTitle:edit.spacingTitle}],[{id:i,title:row.cleaned,candidates:row.candidates}]);row=DS.applyKeywordReview(row,result[0].keywords,'ai',result[0].spacingTitle);}
  if(edit.status==='approved')row=DS.approve(row,edit.name,typeof edit.evidence==='string'?edit.evidence:'',o.terms,matcher);
  else if(edit.status==='held')row={...row,status:'held',evidence:typeof edit.evidence==='string'?edit.evidence:''};
  if(typeof edit.error==='string')row.aiError=edit.error.slice(0,1000);return row;});
