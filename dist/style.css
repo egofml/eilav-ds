@@ -24,3 +24,5 @@
 td>.warning{display:block;margin-top:8px;overflow-wrap:anywhere}
 .ai-panel a{display:inline-block;white-space:nowrap}
 @media(max-width:650px){#workerStatus{grid-template-columns:1fr}.ai-actions{flex-direction:column}.key-row span{min-width:0;flex-basis:100%}}
+
+.copy-status{padding:14px 16px;border:1px solid var(--border);border-radius:8px;background:#f4f7fc;line-height:1.7;overflow-wrap:anywhere}.copy-status[data-state="success"]{background:#e8f7ee;border-color:#90cba6;color:#155e35;font-weight:600}.copy-status[data-state="error"]{background:#fff0e7;border-color:#e6af8b;color:#8e4319}.copy-status[data-state="pending"]{background:#eaf0ff;color:#244bc1}
