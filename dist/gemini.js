@@ -24,7 +24,20 @@ async function requestError(response,key,model){
  detail=detail.replace(/AIza[A-Za-z0-9_-]+/g,'[키 숨김]').replace(/https?:\/\/[^\s]+/g,'[주소 숨김]').replace(/projects\/[^\s/]+/g,'projects/[숨김]').slice(0,800);
  const labels={400:'요청 형식·설정 오류',401:'API 키 인증 실패',403:'API 키 권한·사용 지역 확인 필요',404:'모델을 찾을 수 없음',429:'프로젝트 한도 초과',500:'Google 서버 오류',503:'Google 서버 일시 과부하'};
  const error=Object.assign(Error('Gemini HTTP '+response.status+' · '+(labels[response.status]||'요청 실패')+' · 모델 '+model+(detail?' · '+detail:'')),{status:response.status});
- const retry=response.headers?.get('Retry-After');error.retryAfterMs=retry?(Number(retry)*1000||Math.max(0,Date.parse(retry)-Date.now())):60000;return error;
+ const details=payload?.error?.details||[],violations=details.flatMap(d=>Array.isArray(d.violations)?d.violations:[]);
+ const quotaIds=violations.map(v=>v.quotaId||'').join(' ');
+ const raw=payload?.error?.message||'';
+ const daily=/per.?day|daily|per.?24.?hours/i.test(quotaIds+' '+raw);
+ const zero=violations.some(v=>String(v.quotaValue)==='0')||/limit:\s*0(?:\D|$)/i.test(raw);
+ const minute=/per.?minute|per.?second/i.test(quotaIds+' '+raw);
+ const retry=response.headers?.get('Retry-After'),info=details.find(d=>d.retryDelay)?.retryDelay;
+ const seconds=typeof info==='string'?parseFloat(info):Number(info?.seconds);
+ const messageDelay=raw.match(/retry in\s+([\d.]+)s/i);
+ const headerDelay=retry?(Number(retry)*1000||Date.parse(retry)-Date.now()):0;
+ error.retryAfterMs=Math.max(1000,Number.isFinite(headerDelay)?headerDelay:0,Number.isFinite(seconds)?seconds*1000:0,messageDelay?Number(messageDelay[1])*1000:0);
+ if(error.retryAfterMs===1000)error.retryAfterMs=60000;
+ error.quotaKind=zero?'unavailable':daily?'daily':minute?'temporary':'unknown';
+ return error;
 }
 async function testConnection({key,model,fetcher=fetch,onUsage=()=>{}}){
  const started=Date.now();
