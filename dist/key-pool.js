@@ -2,7 +2,7 @@
 class KeyPool {
  constructor(){this.keys=[];this.projects=new Map();this.active=null;this.busy=false;this.counter=0;this.runningProjects=new Set();this.nextRequest=new Map();}
  workerProjects(limit=4){return [...new Set(this.summary().filter(k=>k.status==='ready'||k.status==='quota'&&!['daily','unavailable'].includes(this.projects.get(k.project)?.kind)).sort((a,b)=>Number(b.active)-Number(a.active)).map(k=>k.project))].slice(0,Math.max(1,Math.min(4,limit)));}
- async executeProject(project,request,{paceMs=0,stopped=()=>false,onWait=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now}={}){
+ async executeProject(project,request,{paceMs=0,quotaRetries=null,stopped=()=>false,onWait=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now}={}){
  if(this.runningProjects.has(project)||this.busy&&!this.runningProjects.size)throw Error('해당 프로젝트 요청이 이미 진행 중입니다.');
  const entry=this.keys.filter(k=>k.project===project&&k.status!=='invalid').sort((a,b)=>Number(b.id===this.active)-Number(a.id===this.active))[0];
  if(!entry)throw Error('사용 가능한 프로젝트 키가 없습니다.');
@@ -22,13 +22,39 @@ class KeyPool {
     if(e.status!==429)throw e;
     const kind=e.quotaKind||'unknown',delay=Math.max(60000,e.retryAfterMs||0)+1000;
     this.projects.set(project,{retryAt:now()+delay,kind});
-    const maxRetries=kind==='temporary'?3:kind==='unknown'?1:0;
+    const maxRetries=quotaRetries??(kind==='temporary'?3:kind==='unknown'?1:0);
     if(attempt>=maxRetries)throw e;
     await pause(delay,kind==='temporary'?'일시 제한 자동 재개 대기':'한도 종류 미확인 · 한 번 재시도 대기');
     this.projects.delete(project);
    }
   }
  }finally{this.runningProjects.delete(project);this.busy=this.runningProjects.size>0;}
+ }
+
+ createDispatch(){return {retired:new Set(),strikes:new Map()};}
+ async executeAny(request,{dispatch=this.createDispatch(),fallback=true,stopped=()=>false,onProject=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now,...options}={}){
+  while(!stopped()){
+   const candidates=[...new Set(this.keys.filter(k=>k.status!=='invalid'&&!dispatch.retired.has(k.project)&&!['daily','unavailable'].includes(this.projects.get(k.project)?.kind)).map(k=>k.project))];
+   if(!candidates.length)throw Error('이번 실행에서 사용할 수 있는 프로젝트가 없습니다. 완료 결과는 유지됩니다.');
+   const free=candidates.filter(p=>!this.runningProjects.has(p)).sort((a,b)=>(this.projects.get(a)?.retryAt||0)-(this.projects.get(b)?.retryAt||0));
+   const project=free[0],remaining=project?(this.projects.get(project)?.retryAt||0)-now():1000;
+   if(!project||remaining>0){onProject(project||'',project?'한도 대기 · '+Math.ceil(remaining/1000)+'초':'다른 프로젝트 요청 완료 대기');await wait(Math.min(1000,Math.max(1,remaining)));continue;}
+   onProject(project,'배정됨');
+   try{return await this.executeProject(project,key=>request(key,project),{...options,quotaRetries:0,stopped,wait,now,onWait:state=>onProject(project,state)});}
+   catch(e){
+    if(stopped()||!fallback)throw e;
+    if(e.status===429){
+     const strikes=(dispatch.strikes.get(project)||0)+1;dispatch.strikes.set(project,strikes);
+     const max=e.quotaKind==='temporary'?4:e.quotaKind==='unknown'||!e.quotaKind?2:1;
+     if(strikes>=max)dispatch.retired.add(project);
+     onProject(project,dispatch.retired.has(project)?'한도 반복 · 이번 실행 중지':'한도 대기 · 다른 프로젝트에 인계');
+     continue;
+    }
+    if(e.status===401||e.status===403||e.status===404){dispatch.retired.add(project);onProject(project,'오류 · 다른 프로젝트에 인계');continue;}
+    throw e;
+   }
+  }
+  throw Error('사용자가 검토를 중지했습니다.');
  }
  save(storage){if(!this.keys.length){storage.removeItem('eilav.gemini.keys.v1');return;}storage.setItem('eilav.gemini.keys.v1',JSON.stringify({version:1,keys:this.keys,active:this.active,projects:[...this.projects]}));}
  restore(storage){const raw=storage.getItem('eilav.gemini.keys.v1');if(!raw)return;const data=JSON.parse(raw);if(data.version!==1||!Array.isArray(data.keys)||data.keys.length>20||!Array.isArray(data.projects))throw Error('저장된 키 목록을 읽을 수 없습니다.');const next=new KeyPool();for(const k of data.keys){const id=next.add(k.label,k.project,k.key);if(k.usage){const u=k.usage;for(const field of ['requests','responses','input','output','total'])next.keys.at(-1).usage[field]=Number.isSafeInteger(u[field])&&u[field]>=0?u[field]:0;}if(k.status==='invalid')next.keys.at(-1).status='invalid';if(k.id===data.active)next.active=id;}for(const [project,state]of data.projects){if(typeof project!=='string'||!Number.isFinite(state?.retryAt))throw Error('저장된 한도 정보를 읽을 수 없습니다.');next.projects.set(project,{retryAt:state.retryAt,kind:['temporary','daily','unavailable','unknown'].includes(state.kind)?state.kind:'unknown'});}this.keys=next.keys;this.active=next.active;this.projects=next.projects;this.counter=next.counter;}
