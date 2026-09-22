@@ -5,12 +5,13 @@ function parts(at){return Object.fromEntries(pacific.formatToParts(at).filter(p=
 function midnight(day){let at=day+8*3600000;for(let i=0;i<3;i++){const p=parts(at);at+=day-Date.UTC(p.year,p.month-1,p.day,p.hour,p.minute,p.second);}return at;}
 function usageWindow(at){const p=parts(at),day=Date.UTC(p.year,p.month-1,p.day);return {day:new Date(day).toISOString().slice(0,10),start:midnight(day),end:midnight(day+86400000)};}
 class KeyPool {
- constructor({now=Date.now}={}){this.now=now;this.keys=[];this.projects=new Map();this.active=null;this.busy=false;this.counter=0;this.runningProjects=new Set();this.nextRequest=new Map();}
+ constructor({now=Date.now}={}){this.now=now;this.keys=[];this.projects=new Map();this.active=null;this.busy=false;this.counter=0;this.runningProjects=new Set();this.nextRequest=new Map();this.adaptivePacing=new Map();}
+ pacing(project,paceMs){const floor=Math.max(4500,Math.min(60000,paceMs||0));let state=this.adaptivePacing.get(project);if(!state){state={floor,paceMs:floor,successes:0};this.adaptivePacing.set(project,state);}state.floor=floor;state.paceMs=Math.max(floor,state.paceMs);return state;}
  usagePeriod(){const at=this.now();if(!this.period||at<this.period.start||at>=this.period.end)this.period=usageWindow(at);return {...this.period};}
  daily(entry){const period=this.usagePeriod();if(entry.usageDay!==period.day){entry.usageDay=period.day;entry.dailyUsage=emptyUsage();}return entry.dailyUsage;}
  countRequest(entry){entry.usage.requests++;this.daily(entry).requests++;}
  workerProjects(limit=4){return [...new Set(this.summary().filter(k=>k.status==='ready'||k.status==='quota'&&!['daily','unavailable'].includes(this.projects.get(k.project)?.kind)).sort((a,b)=>Number(b.active)-Number(a.active)).map(k=>k.project))].slice(0,Math.max(1,Math.min(4,limit)));}
- async executeProject(project,request,{paceMs=0,quotaRetries=null,stopped=()=>false,onWait=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now}={}){
+ async executeProject(project,request,{paceMs=0,adaptive=false,quotaRetries=null,stopped=()=>false,onWait=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now}={}){
  if(this.runningProjects.has(project)||this.busy&&!this.runningProjects.size)throw Error('해당 프로젝트 요청이 이미 진행 중입니다.');
  const entry=this.keys.filter(k=>k.project===project&&k.status!=='invalid').sort((a,b)=>Number(b.id===this.active)-Number(a.id===this.active))[0];
  if(!entry)throw Error('사용 가능한 프로젝트 키가 없습니다.');
@@ -21,16 +22,18 @@ class KeyPool {
   if(state){if(['daily','unavailable'].includes(state.kind))throw Error(state.kind==='daily'?'일일 요청 한도 소진 · Google 한도 확인 필요':'사용 가능한 할당량 없음 · Google 설정 확인 필요');
    await pause(state.retryAt-now(),'이전 제한 대기');this.projects.delete(project);}
   for(let attempt=0;;attempt++){
-   await pause((this.nextRequest.get(project)||0)-now(),'요청 간격 조절');
+   const pacing=adaptive?this.pacing(project,paceMs):null;
+   await pause((this.nextRequest.get(project)||0)-now(),pacing&&pacing.paceMs>pacing.floor?'자동 감속 · 요청 간격 조절':'요청 간격 조절');
    if(stopped())throw Error('사용자가 검토를 중지했습니다.');
-   this.nextRequest.set(project,now()+paceMs);onWait('요청 중');this.countRequest(entry);
-   try{const result=await request(entry.key);this.projects.delete(project);return result;}
+   this.nextRequest.set(project,now()+(pacing?pacing.paceMs:paceMs));onWait('요청 중');this.countRequest(entry);
+   try{const result=await request(entry.key);this.projects.delete(project);if(pacing&&++pacing.successes>=5){pacing.paceMs=Math.max(pacing.floor,Math.ceil(pacing.paceMs/2));pacing.successes=0;}return result;}
    catch(e){
     if(e.status===401||e.status===403)entry.status='invalid';
     if(e.status!==429)throw e;
     const kind=e.quotaKind||'unknown',delay=Math.max(60000,e.retryAfterMs||0)+1000;
+    if(pacing&&['temporary','unknown'].includes(kind)){pacing.paceMs=Math.min(60000,pacing.paceMs*2);pacing.successes=0;this.nextRequest.set(project,Math.max(this.nextRequest.get(project)||0,now()+pacing.paceMs));}
     this.projects.set(project,{retryAt:now()+delay,kind});
-    const maxRetries=quotaRetries??(kind==='temporary'?3:kind==='unknown'?1:0);
+    const maxRetries=['daily','unavailable'].includes(kind)?0:quotaRetries??(kind==='temporary'?3:kind==='unknown'?1:0);
     if(attempt>=maxRetries)throw e;
     await pause(delay,kind==='temporary'?'일시 제한 자동 재개 대기':'한도 종류 미확인 · 한 번 재시도 대기');
     this.projects.delete(project);
@@ -72,7 +75,7 @@ class KeyPool {
  reset(project,now=Date.now()){const state=this.projects.get(project);if(state&&now<state.retryAt)throw Error('대기 시간이 지나지 않았습니다. 잠시 후 다시 시도해주세요.');this.projects.delete(project);for(const key of this.keys)if(key.project===project)key.status='ready';}
  async test(id,request){if(this.busy)throw Error('진행 중인 요청이 끝난 뒤 테스트해주세요.');const entry=this.keys.find(k=>k.id===id);if(!entry)throw Error('등록된 키를 선택해주세요.');const quota=this.projects.get(entry.project);if(quota&&Date.now()<quota.retryAt)throw Error('한도 초과 대기 시간이 지나지 않았습니다.');this.busy=true;try{this.countRequest(entry);const result=await request(entry.key);entry.status='ready';this.projects.delete(entry.project);return result;}catch(e){if(e.status===429)this.projects.set(entry.project,{retryAt:Date.now()+Math.max(60000,e.retryAfterMs||0),kind:e.quotaKind||'unknown'});if(e.status===401||e.status===403)entry.status='invalid';throw e;}finally{this.busy=false;}}
  recordUsage(key,metadata){const entry=this.keys.find(k=>k.key===key);if(!entry)return;entry.usage.responses++;const daily=this.daily(entry);daily.responses++;for(const [field,source]of [["input","promptTokenCount"],["output","candidatesTokenCount"],["total","totalTokenCount"]]){const n=metadata[source];if(Number.isSafeInteger(n)&&n>=0){entry.usage[field]+=n;daily[field]+=n;}}}
- summary(){return this.keys.map(k=>({id:k.id,label:k.label,project:k.project,active:k.id===this.active,status:this.projects.has(k.project)?'quota':k.status,quotaKind:this.projects.get(k.project)?.kind,mask:'••••'+k.key.slice(-4),usage:{...k.usage},dailyUsage:{...this.daily(k)},usageDay:k.usageDay}));}
+ summary(){return this.keys.map(k=>({id:k.id,label:k.label,project:k.project,active:k.id===this.active,status:this.projects.has(k.project)?'quota':k.status,quotaKind:this.projects.get(k.project)?.kind,paceMs:this.adaptivePacing.get(k.project)?.paceMs,mask:'••••'+k.key.slice(-4),usage:{...k.usage},dailyUsage:{...this.daily(k)},usageDay:k.usageDay}));}
  async execute(request,{fallback=true,onSwitch=()=>{}}={}){if(this.busy)throw Error('이미 Gemini 요청을 처리하고 있습니다.');if(!this.keys.length)throw Error('Gemini API 키를 먼저 등록해주세요.');this.busy=true;const candidates=[...this.keys].sort((a,b)=>(b.id===this.active)-(a.id===this.active));const attempted=new Set();let lastError;try{for(const key of candidates){if(!fallback&&key.id!==this.active)continue;if(key.status==='invalid'||this.projects.has(key.project)||attempted.has(key.project))continue;attempted.add(key.project);onSwitch({label:key.label,project:key.project});try{this.countRequest(key);const value=await request(key.key);this.active=key.id;return value;}catch(error){lastError=error;if(error.status===429){this.projects.set(key.project,{retryAt:Date.now()+Math.max(60000,error.retryAfterMs||0),kind:error.quotaKind||'unknown'});if(!fallback)throw error;continue;}if(error.status===401||error.status===403){key.status='invalid';throw error;}throw error;}}throw lastError||Error('사용 가능한 프로젝트가 없습니다. Google AI Studio에서 한도를 확인한 후 중지를 해제해주세요.');}finally{this.busy=false;}}
 }
 if(typeof module!=='undefined'&&module.exports)module.exports=KeyPool;else root.DSKeyPool=KeyPool;
