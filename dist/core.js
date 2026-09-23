@@ -47,6 +47,19 @@ function exclusionReasons(table,source){
 function modelTokens(title,clean){return [...new Set((title.match(/(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*(?:[-_/][A-Za-z0-9]+)*(?![A-Za-z0-9])/g)||[]).filter(t=>/\d/.test(t)&&clean(t).removed.length))];}
 function preserved(row){return row.status!=='approved'&&!!(row.titleHold||row.applyError||row.status==='held');}
 function effectiveTitle(row){return row.status==='approved'?row.approvedName:preserved(row)?row.original:row.cleaned;}
+function lowPriceDiscount(source,output,ix){
+ const priceIndex=ix['가격'],discountIndex=ix['판매자 부담 할인'],finalIndex=ix['할인 적용가'];
+ if(discountIndex===undefined)return null;
+ const raw=priceIndex===undefined?'':source[priceIndex].trim();
+ if(!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\s*원)?$/.test(raw))return {issue:'가격을 숫자로 확인할 수 없어 할인 원본 유지'};
+ const price=Number(raw.replace(/[,\s원]/g,''));
+ if(!Number.isSafeInteger(price))return {issue:'가격 범위를 확인할 수 없어 할인 원본 유지'};
+ if(price>1500)return null;
+ output[discountIndex]='0';if(finalIndex!==undefined)output[finalIndex]=String(price);
+ return {changed:source[discountIndex]!==output[discountIndex]||(finalIndex!==undefined&&source[finalIndex]!==output[finalIndex]),price};
+}
+function discountHeaders(table){if(!table)return [];const d=table.names.indexOf('판매자 부담 할인'),f=table.names.indexOf('할인 적용가');return d<0||f>=0&&f!==d+1?[]:f<0?['판매자 부담 할인']:['판매자 부담 할인','할인 적용가'];}
+function exportDiscount(table,rows){const headers=discountHeaders(table),start=table.names.indexOf('판매자 부담 할인');if(!headers.length)throw Error('판매자 부담 할인 열이 없거나 할인 적용가와 인접하지 않습니다. 전체 TSV를 사용해주세요.');return exportRows(table,rows).map(row=>row.slice(start,start+headers.length));}
 function analyze(table,options){const count=options.keywordCount??1;if(!Number.isInteger(count)||count<1||count>3)throw Error('추가 키워드는 1~3개로 선택해주세요.');const ix=Object.fromEntries(table.names.map((n,i)=>[n,i]));const clean=makeMatcher(options.terms||[]);return table.rows.map((source,i)=>{
  const blank=source.every(v=>v==='');if(blank)return {index:i,source,output:source.slice(),blank:true,issues:[],removed:[],status:'blank'};
  const before=source[ix['상품명']],rawKeywords=source[ix['키워드']];const exclusion=exclusionReasons(table,source);if(exclusion.length)return{index:i,source,output:source.slice(),blank:false,code:source[ix['상품코드']],original:before,cleaned:before,proposed:before,keyword:'',candidates:[],candidateReason:'연령 제한 문구 — 삭제 필요 검토',keywordChecks:[],excludedKeywords:[],keywords:rawKeywords,removed:[],issues:[],status:'excluded',exclusion,empty:!before.trim(),evidence:''};
@@ -54,10 +67,11 @@ function analyze(table,options){const count=options.keywordCount??1;if(!Number.i
  const compact=s=>normalize(s).replace(/\s+/g,'');const candidates=[];for(const t of terms){if(t.length<2||t.length>100||compact(titleResult.value).includes(compact(t))||candidates.some(k=>compact(k).includes(compact(t))||compact(t).includes(compact(k))))continue;candidates.push(t);if(candidates.length===count)break;}
  const candidateReason=candidates.length?'':!rawKeywords.trim()?'키워드 없음':!terms.length?'금지어 제거 후 키워드 없음':terms.every(t=>compact(titleResult.value).includes(compact(t)))?'키워드가 이미 상품명에 포함됨':'추가 가능한 키워드 없음 (중복·길이 조건)';const keyword=candidates.join(', ');const proposed=options.position==='ai'?titleResult.value:clean(placeKeywords(titleResult.value,candidates,options.position)).value;
  const hasShipping=ix['배송비']!==undefined;const ship=hasShipping?fee(source[ix['배송비']],options.shipping,options.includeZero):{issue:null},ret=fee(source[ix['반품배송비']],options.returns,options.includeZero);const output=source.slice();output[ix['상품명']]=titleResult.value;output[ix['키워드']]=keywords;if(hasShipping)output[ix['배송비']]=ship.value;output[ix['반품배송비']]=ret.value;
+ const discount=lowPriceDiscount(source,output,ix);
  const issues=[ship.issue&&'배송비: '+ship.issue,ret.issue&&'반품배송비: '+ret.issue].filter(Boolean);
  const removed=[...new Set([...titleResult.removed,...cleanedKeywords.flatMap(k=>k.removed)])];
  const protectedModels=modelTokens(before,clean),titleHold=protectedModels.length?'모델명 내부 금지어 확인: '+protectedModels.join(', '):/^[=+\-@]/.test(titleResult.value.trim())?'금지어 제거 후 수식 시작 문자 발생':'';
- return{index:i,source,output,blank:false,code:source[ix['상품코드']],original:before,cleaned:titleResult.value,proposed,keyword,candidates,candidateReason,keywordChecks:[],excludedKeywords:[],keywords,removed,issues,protectedModels,titleHold,status:proposed!==titleResult.value||options.position==='ai'&&candidates.length?'pending':'cleaned',empty:!titleResult.value.trim(),evidence:''};
+ return{index:i,source,output,discount,blank:false,code:source[ix['상품코드']],original:before,cleaned:titleResult.value,proposed,keyword,candidates,candidateReason,keywordChecks:[],excludedKeywords:[],keywords,removed,issues,protectedModels,titleHold,status:proposed!==titleResult.value||options.position==='ai'&&candidates.length?'pending':'cleaned',empty:!titleResult.value.trim(),evidence:''};
  });}
 function approve(row,name,evidence,terms,matcher,manualReview=false){if(row.titleHold&&!manualReview)throw Error('원본 유지 중입니다. 개별 검토에서 확인 후 적용해주세요.');if(row.exclusion?.length)throw Error("삭제 필요 검토 대상은 상품명 수정에서 제외됩니다.");const clean=matcher||makeMatcher(terms);if(!name.trim())throw Error('상품명은 비울 수 없습니다.');if(name.length>200)throw Error('상품명은 200자 이내로 입력해주세요.');const validationName=manualReview&&row.protectedModels?.length?name.replace(/(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*(?:[-_/][A-Za-z0-9]+)*(?![A-Za-z0-9])/g,t=>row.protectedModels.some(m=>normalize(m)===normalize(t))?'':t):name;if(clean(validationName).removed.length)throw Error('금지어가 남아 있습니다. 제거 후 승인해주세요.');if((row.excludedKeywords||[]).some(k=>normalize(name).includes(normalize(k))))throw Error('의심 또는 확인 필요로 분류된 추가 키워드는 이름에 넣을 수 없습니다.');if(/^[=+\-@]/.test(name.trim()))throw Error('수식으로 해석될 수 있는 시작 문자를 제거해주세요.');return{...row,approvedName:name.trim(),applyError:undefined,manualReview,status:'approved',evidence,reviewedAt:new Date().toISOString(),empty:false};}
 function readyToApply(row){return !row.blank&&!row.titleHold&&!row.exclusion?.length&&row.status==='pending'&&!row.empty&&!row.aiError&&row.candidates.length>0&&row.keywordChecks.length===row.candidates.length&&row.candidates.every(k=>row.keywordChecks.filter(c=>c.keyword===k).length===1);}
@@ -67,5 +81,5 @@ const FREE_COPY_HEADERS='상품명\t가격\t오너클랜 판매가격\t목록 �
 function copyHeaders(table){if(!table)return [];const start=table.names.indexOf('상품명');return [COPY_HEADERS,FREE_COPY_HEADERS].find(headers=>start>=0&&headers.every((name,i)=>table.names[start+i]===name))||[];}
 function exportBlock(table,rows){const headers=copyHeaders(table),start=table.names.indexOf('상품명');if(!headers.length)throw Error('상품명부터 반품배송비까지 기존 양식 13개 열 또는 무료배송 양식 11개 열이 원본 순서로 연속되어 있어야 합니다.');return exportRows(table,rows).map(row=>row.slice(start,start+headers.length));}
 function exportRows(table,rows){const title=table.names.indexOf('상품명');return rows.map(row=>{const result=(preserved(row)?row.source:row.output).slice();if(row.status==='approved')result[title]=row.approvedName;return result;});}
-const api={preserved,effectiveTitle,readyToApply,approveBatch,spacingEligible,checkedSpacing,exclusionReasons,HEADERS,COPY_HEADERS,FREE_COPY_HEADERS,copyHeaders,exportBlock,parseTSV,stringify,tableFrom,normalize,termsFrom,makeMatcher,fee,placeKeywords,placeAIKeywords,applyKeywordReview,analyze,approve,exportRows};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DS=api;
+const api={discountHeaders,exportDiscount,preserved,effectiveTitle,readyToApply,approveBatch,spacingEligible,checkedSpacing,exclusionReasons,HEADERS,COPY_HEADERS,FREE_COPY_HEADERS,copyHeaders,exportBlock,parseTSV,stringify,tableFrom,normalize,termsFrom,makeMatcher,fee,placeKeywords,placeAIKeywords,applyKeywordReview,analyze,approve,exportRows};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DS=api;
 })(typeof window==='undefined'?globalThis:window);

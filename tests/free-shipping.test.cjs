@@ -10,8 +10,8 @@ test('Gmarket/Auction 24-column free-shipping input preserves every non-target f
  const original=record(),t=table([original]),rows=DS.analyze(t,options),out=DS.exportRows(t,rows);
  assert.deepEqual(t.headers,headers);assert.equal(t.names.includes('배송비'),false);assert.equal(t.names.includes('브랜드'),false);
  assert.equal(out[0].length,24);assert.equal(out[0][8],'주방 수납함');assert.equal(out[0][12],'정리용');assert.equal(out[0][18],'3500');
- for(let i=0;i<headers.length;i++)if(![8,12,18].includes(i))assert.equal(out[0][i],original[i],headers[i]);
- assert.deepEqual(rows[0].issues,[]);assert.deepEqual(t.rows[0],original);assert.equal(Object.hasOwn(rows[0].output,'undefined'),false);
+ for(let i=0;i<headers.length;i++)if(![8,12,18,20,21].includes(i))assert.equal(out[0][i],original[i],headers[i]);
+ assert.equal(out[0][20],'0');assert.equal(out[0][21],'1200');assert.deepEqual(rows[0].issues,[]);assert.deepEqual(t.rows[0],original);assert.equal(Object.hasOwn(rows[0].output,'undefined'),false);
  assert.deepEqual(DS.exportRows(t,DS.analyze(t,options)),out);
 });
 
