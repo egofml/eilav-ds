@@ -6,13 +6,21 @@ function record(overrides={},names=headers){const values={'상품코드':'W00000
 function fixture(records,names=headers){const source=DS.stringify([names,...records]),table=DS.tableFrom(source);return{source,table,rows:DS.analyze(table,options)};}
 const cell=(table,row,name)=>row[table.names.indexOf(name)];
 
-test('low-price seller discounts become zero and final prices equal selling prices at the inclusive 1500 boundary',()=>{
- const inputs=[['1499','1%','1484'],['1500','110원','1390'],['1,500원','1%','1485'],['001500','110','1390'],['0','1%','100'],['1501','1%','1486'],['5000','110원','4890']];
+test('prices below ten won are flagged without negative final prices; ten won remains a fixed amount',()=>{
+ const f=fixture(['0','9','10','1500','1501'].map(price=>record({'가격':price,'판매자 부담 할인':'0','할인 적용가':price}))),out=DS.exportRows(f.table,f.rows);
+ for(const i of [0,1]){assert.match(f.rows[i].discount.issue,/10원 미만/);assert.deepEqual(out[i],f.table.rows[i]);}
+ assert.deepEqual(DS.exportDiscount(f.table,f.rows).slice(2),[['10원','0'],['10원','1490'],['0','1501']]);
+ const restored=S.decode(JSON.parse(JSON.stringify(S.encode({...f,options}))),DS,G);
+ assert.deepEqual(DS.exportRows(restored.table,restored.rows),out);
+});
+
+test('low-price seller discounts become ten won and final prices subtract ten won at the inclusive 1500 boundary',()=>{
+ const inputs=[['1499','1%','1484'],['1500','110원','1390'],['1,500원','1%','1485'],['001500','110','1390'],['10','1%','100'],['1501','1%','1486'],['5000','110원','4890']];
  const f=fixture(inputs.map(([price,discount,final])=>record({'가격':price,'판매자 부담 할인':discount,'할인 적용가':final}))),out=DS.exportRows(f.table,f.rows);
  for(let i=0;i<inputs.length;i++){
   const [price,discount,final]=inputs[i],eligible=i<5;
-  assert.equal(cell(f.table,out[i],'판매자 부담 할인'),eligible?'0':discount,price);
-  assert.equal(cell(f.table,out[i],'할인 적용가'),eligible?String(Number(price.replace(/[,원]/g,''))):final,price);
+  assert.equal(cell(f.table,out[i],'판매자 부담 할인'),eligible?'10원':discount,price);
+  assert.equal(cell(f.table,out[i],'할인 적용가'),eligible?String(Number(price.replace(/[,원]/g,''))-10):final,price);
   for(let j=0;j<headers.length;j++)if(!['판매자 부담 할인','할인 적용가'].includes(headers[j]))assert.equal(out[i][j],f.table.rows[i][j],headers[j]);
  }
  assert.deepEqual(f.table.rows,inputs.map(([price,discount,final])=>record({'가격':price,'판매자 부담 할인':discount,'할인 적용가':final})));
@@ -20,8 +28,8 @@ test('low-price seller discounts become zero and final prices equal selling pric
 
 test('zero or empty discount still synchronizes an eligible final price and supplier price never selects eligibility',()=>{
  const f=fixture([record({'판매자 부담 할인':'0','할인 적용가':'1000'}),record({'판매자 부담 할인':'','할인 적용가':'1499'}),record({'가격':'1600','오너클랜 판매가격':'1000','판매자 부담 할인':'110원','할인 적용가':'1490'}),record({'가격':'1000','오너클랜 판매가격':'2000'})]),out=DS.exportRows(f.table,f.rows);
- assert.deepEqual(out.map(r=>cell(f.table,r,'판매자 부담 할인')),['0','0','110원','0']);
- assert.deepEqual(out.map(r=>cell(f.table,r,'할인 적용가')),['1500','1500','1490','1000']);
+ assert.deepEqual(out.map(r=>cell(f.table,r,'판매자 부담 할인')),['10원','10원','110원','10원']);
+ assert.deepEqual(out.map(r=>cell(f.table,r,'할인 적용가')),['1490','1490','1490','990']);
 });
 
 test('invalid or absent selling prices cannot zero a discount',()=>{
@@ -37,7 +45,7 @@ test('optional discount headers never create new columns and copy requires the s
   const f=fixture([record({},names)],names);assert.deepEqual(DS.exportRows(f.table,f.rows),f.table.rows);assert.deepEqual(DS.discountHeaders(f.table),[]);assert.throws(()=>DS.exportDiscount(f.table,f.rows));
  }
  const one=headers.filter(h=>h!=='할인 적용가'),single=fixture([record({},one)],one);
- assert.deepEqual(DS.discountHeaders(single.table),['판매자 부담 할인']);assert.deepEqual(DS.exportDiscount(single.table,single.rows),[['0']]);
+ assert.deepEqual(DS.discountHeaders(single.table),['판매자 부담 할인']);assert.deepEqual(DS.exportDiscount(single.table,single.rows),[['10원']]);
  assert.equal(DS.exportRows(single.table,single.rows)[0].length,one.length);
  const separated=[...headers.slice(0,8),'추가 열',...headers.slice(8)],f=fixture([record({'추가 열':'원본'},separated)],separated);
  assert.deepEqual(DS.discountHeaders(f.table),[]);assert.throws(()=>DS.exportDiscount(f.table,f.rows));
@@ -50,9 +58,9 @@ test('discount copy preserves original row alignment including blanks, exclusion
  assert(f.rows[2].exclusion.length);assert(f.rows[3].titleHold);
  const out=DS.exportRows(f.table,f.rows);for(let i=1;i<=5;i++)assert.deepEqual(out[i],inputs[i]);
  assert.deepEqual(DS.discountHeaders(f.table),['판매자 부담 할인','할인 적용가']);
- assert.deepEqual(DS.exportDiscount(f.table,f.rows),[['0','1500'],['',''],['1%','1485'],['1%','1485'],['1%','1485'],['1%','1485'],['110원','1890']]);
+ assert.deepEqual(DS.exportDiscount(f.table,f.rows),[['10원','1490'],['',''],['1%','1485'],['1%','1485'],['1%','1485'],['1%','1485'],['110원','1890']]);
  for(const i of [3,4,5])f.rows[i]=DS.approve(f.rows[i],f.rows[i].original,'개별 확인',options.terms,undefined,true);
- for(const i of [3,4,5])assert.deepEqual(DS.exportDiscount(f.table,f.rows)[i],['0','1500']);
+ for(const i of [3,4,5])assert.deepEqual(DS.exportDiscount(f.table,f.rows)[i],['10원','1490']);
  assert.throws(()=>DS.approve(f.rows[2],f.rows[2].original,'',options.terms,undefined,true));
 });
 
@@ -62,6 +70,6 @@ test('saved sessions recalculate low-price discounts without cumulative edits an
  const expected=DS.exportRows(f.table,f.rows);let state={...f,options};
  for(let i=0;i<3;i++)state=S.decode(JSON.parse(JSON.stringify(S.encode(state))),DS,G);
  assert.deepEqual(state.table.rows,f.table.rows);assert.deepEqual(DS.exportRows(state.table,state.rows),expected);
- assert.deepEqual(DS.exportDiscount(state.table,state.rows),[['0','1500'],['0','1500'],['1%','1485']]);
+ assert.deepEqual(DS.exportDiscount(state.table,state.rows),[['10원','1490'],['10원','1490'],['1%','1485']]);
  assert.equal(cell(state.table,DS.exportRows(state.table,state.rows)[0],'반품배송비'),'3500');
 });

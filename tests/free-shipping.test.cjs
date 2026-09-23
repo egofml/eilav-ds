@@ -11,7 +11,7 @@ test('Gmarket/Auction 24-column free-shipping input preserves every non-target f
  assert.deepEqual(t.headers,headers);assert.equal(t.names.includes('배송비'),false);assert.equal(t.names.includes('브랜드'),false);
  assert.equal(out[0].length,24);assert.equal(out[0][8],'주방 수납함');assert.equal(out[0][12],'정리용');assert.equal(out[0][18],'3500');
  for(let i=0;i<headers.length;i++)if(![8,12,18,20,21].includes(i))assert.equal(out[0][i],original[i],headers[i]);
- assert.equal(out[0][20],'0');assert.equal(out[0][21],'1200');assert.deepEqual(rows[0].issues,[]);assert.deepEqual(t.rows[0],original);assert.equal(Object.hasOwn(rows[0].output,'undefined'),false);
+ assert.equal(out[0][20],'10원');assert.equal(out[0][21],'1190');assert.deepEqual(rows[0].issues,[]);assert.deepEqual(t.rows[0],original);assert.equal(Object.hasOwn(rows[0].output,'undefined'),false);
  assert.deepEqual(DS.exportRows(t,DS.analyze(t,options)),out);
 });
 
@@ -23,18 +23,18 @@ test('free-shipping 14-column copy keeps blank rows, original image, zero return
  const block=DS.exportBlock(t,rows);assert.equal(block.length,3);assert(block.every(row=>row.length===14));
  assert.equal(block[0][0],'주방 정리용 수납함');assert.equal(block[0][1],'001200');assert.equal(block[0][3],'https://example.com/list.jpg');assert.equal(block[0][10],'3500');
  assert.deepEqual(block[1],Array(14).fill(''));assert.equal(block[2][10],'0');
- assert.equal(block[0][11],t.rows[0][19]);assert.deepEqual(block[0].slice(12),['0','1200']);
+ assert.equal(block[0][11],t.rows[0][19]);assert.deepEqual(block[0].slice(12),['10원','1190']);
  assert.deepEqual(DS.parseTSV(DS.stringify(block)),block);
 });
 
 test('unified copy includes intervening fields through the last discount column and falls back when absent',()=>{
  const names=[...headers.slice(0,21),'중간 메모',...headers.slice(21)],values=names.map(h=>h==='중간 메모'?'원본\t메모':record()[headers.indexOf(h)]),t=DS.tableFrom(DS.stringify([names,values]));
  const rows=DS.analyze(t,options),out=DS.exportBlock(t,rows);
- assert.equal(out[0].length,15);assert.equal(out[0][13],'원본\t메모');assert.equal(out[0][14],'1200');assert.equal(out[0][12],'0');
+ assert.equal(out[0].length,15);assert.equal(out[0][13],'원본\t메모');assert.equal(out[0][14],'1190');assert.equal(out[0][12],'10원');
  const narrow=headers.filter(h=>!['판매자 부담 할인','할인 적용가'].includes(h)),fallback=DS.tableFrom(DS.stringify([narrow,narrow.map(h=>record()[headers.indexOf(h)])]));
  assert.deepEqual(DS.copyHeaders(fallback),copyHeaders);assert.equal(DS.exportBlock(fallback,DS.analyze(fallback,options))[0].length,11);
  const paid=DS.tableFrom(DS.stringify([DS.HEADERS,DS.HEADERS.map(h=>({'상품명':'바구니','가격':'1500','판매자 부담 할인':'1%','배송비':'3000','반품배송비':'0','판매시작일':'2026-09-23','판매종료일':'2099-12-31','배송타입':'원본 타입'}[h]||''))]));
- const paidOut=DS.exportBlock(paid,DS.analyze(paid,options))[0];assert.equal(paidOut[18],'0');for(const h of ['판매시작일','판매종료일','배송타입'])assert.equal(paidOut[DS.copyHeaders(paid).indexOf(h)],paid.rows[0][paid.names.indexOf(h)]);
+ const paidOut=DS.exportBlock(paid,DS.analyze(paid,options))[0];assert.equal(paidOut[18],'10원');for(const h of ['판매시작일','판매종료일','배송타입'])assert.equal(paidOut[DS.copyHeaders(paid).indexOf(h)],paid.rows[0][paid.names.indexOf(h)]);
 });
 
 test('free-shipping work checkpoint restores approved review and 24 original columns without adding return fee twice',()=>{

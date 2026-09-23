@@ -55,8 +55,9 @@ function lowPriceDiscount(source,output,ix){
  const price=Number(raw.replace(/[,\s원]/g,''));
  if(!Number.isSafeInteger(price))return {issue:'가격 범위를 확인할 수 없어 할인 원본 유지'};
  if(price>1500)return null;
- output[discountIndex]='0';if(finalIndex!==undefined)output[finalIndex]=String(price);
- return {changed:source[discountIndex]!==output[discountIndex]||(finalIndex!==undefined&&source[finalIndex]!==output[finalIndex]),price};
+ if(price<10)return {issue:'가격이 10원 미만이어서 10원 할인 적용 불가 · 할인 원본 유지'};
+ output[discountIndex]='10원';if(finalIndex!==undefined)output[finalIndex]=String(price-10);
+ return {changed:source[discountIndex]!==output[discountIndex]||(finalIndex!==undefined&&source[finalIndex]!==output[finalIndex]),price,finalPrice:price-10};
 }
 function discountHeaders(table){if(!table)return [];const d=table.names.indexOf('판매자 부담 할인'),f=table.names.indexOf('할인 적용가');return d<0||f>=0&&f!==d+1?[]:f<0?['판매자 부담 할인']:['판매자 부담 할인','할인 적용가'];}
 function exportDiscount(table,rows){const headers=discountHeaders(table),start=table.names.indexOf('판매자 부담 할인');if(!headers.length)throw Error('판매자 부담 할인 열이 없거나 할인 적용가와 인접하지 않습니다. 전체 TSV를 사용해주세요.');return exportRows(table,rows).map(row=>row.slice(start,start+headers.length));}
