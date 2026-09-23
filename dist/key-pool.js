@@ -42,28 +42,29 @@ class KeyPool {
  }finally{this.runningProjects.delete(project);this.busy=this.runningProjects.size>0;}
  }
 
- createDispatch(){return {retired:new Set(),strikes:new Map(),used:new Set(),stats:new Map(),deferred:new Map(),preferred:null,lastRotationAt:null};}
+ createDispatch(){return {retired:new Set(),strikes:new Map(),used:new Set(),stats:new Map(),preferred:null,lastRotationAt:null};}
  rotateSlow(dispatch,{etaSeconds,elapsedMs,now=Date.now()}){
   if(!(etaSeconds>3600)||elapsedMs<30000||dispatch.preferred||dispatch.lastRotationAt!==null&&now-dispatch.lastRotationAt<60000)return null;
   const eligible=[...new Set(this.keys.filter(k=>k.status!=='invalid'&&!dispatch.retired.has(k.project)&&!['daily','unavailable'].includes(this.projects.get(k.project)?.kind)).map(k=>k.project))];
-  const recent=eligible.filter(p=>dispatch.used.has(p)&&dispatch.stats.has(p)&&(dispatch.deferred.get(p)||0)<=now&&(this.runningProjects.has(p)||now-dispatch.stats.get(p).lastAt<120000));
+  const recent=eligible.filter(p=>dispatch.used.has(p)&&dispatch.stats.has(p)&&(this.runningProjects.has(p)||now-dispatch.stats.get(p).lastAt<120000));
   const score=p=>dispatch.stats.get(p).durationMs+(this.adaptivePacing.get(p)?.paceMs||4500);
   recent.sort((a,b)=>score(b)-score(a));const from=recent[0];if(!from)return null;
-  const to=eligible.filter(p=>p!==from&&!this.runningProjects.has(p)&&(dispatch.deferred.get(p)||0)<=now&&Math.max(this.projects.get(p)?.retryAt||0,this.nextRequest.get(p)||0)<=now).sort((a,b)=>Number(dispatch.used.has(a))-Number(dispatch.used.has(b)))[0];
-  if(!to)return null;dispatch.deferred.set(from,now+300000);dispatch.preferred=to;dispatch.lastRotationAt=now;return {from,to};
+  const to=eligible.filter(p=>p!==from&&!this.runningProjects.has(p)&&Math.max(this.projects.get(p)?.retryAt||0,this.nextRequest.get(p)||0)<=now).sort((a,b)=>Number(dispatch.used.has(a))-Number(dispatch.used.has(b)))[0];
+  if(!to)return null;dispatch.retired.add(from);dispatch.preferred=to;dispatch.lastRotationAt=now;return {from,to};
  }
  async executeAny(request,{dispatch=this.createDispatch(),fallback=true,stopped=()=>false,onProject=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now,...options}={}){
   while(!stopped()){
    const candidates=[...new Set(this.keys.filter(k=>k.status!=='invalid'&&!dispatch.retired.has(k.project)&&!['daily','unavailable'].includes(this.projects.get(k.project)?.kind)).map(k=>k.project))];
    if(!candidates.length)throw Error('이번 실행에서 사용할 수 있는 프로젝트가 없습니다. 완료 결과는 유지됩니다.');
    const at=now(),readyAt=p=>Math.max(this.projects.get(p)?.retryAt||0,this.nextRequest.get(p)||0);
-   const free=candidates.filter(p=>!this.runningProjects.has(p)).sort((a,b)=>Math.max(0,readyAt(a)-at)-Math.max(0,readyAt(b)-at)||Number((dispatch.deferred.get(a)||0)>at)-Number((dispatch.deferred.get(b)||0)>at)||Number(b===dispatch.preferred)-Number(a===dispatch.preferred));
+   const free=candidates.filter(p=>!this.runningProjects.has(p)).sort((a,b)=>Math.max(0,readyAt(a)-at)-Math.max(0,readyAt(b)-at)||Number(b===dispatch.preferred)-Number(a===dispatch.preferred));
    const project=free[0],remaining=project?readyAt(project)-at:1000;
    if(!project||remaining>0){onProject(project||'',project?'한도 대기 · '+Math.ceil(remaining/1000)+'초':'다른 프로젝트 요청 완료 대기');await wait(Math.min(1000,Math.max(1,remaining)));continue;}
    onProject(project,'배정됨');
    try{return await this.executeProject(project,async key=>{dispatch.used.add(project);if(dispatch.preferred===project)dispatch.preferred=null;const started=now();try{return await request(key,project);}finally{dispatch.stats.set(project,{durationMs:Math.max(0,now()-started),lastAt:now()});}},{...options,quotaRetries:0,stopped,wait,now,onWait:state=>onProject(project,state)});}
    catch(e){
     if(stopped()||!fallback)throw e;
+    if(e.code==='AI_TRANSIENT'||[500,502,503,504].includes(e.status)){dispatch.retired.add(project);onProject(project,'연결·서버 오류'+(e.status?' HTTP '+e.status:' · 연결 또는 응답 시간 초과')+' · 이번 실행 제외, 다음 프로젝트로 전환');continue;}
     if(e.status===429){
      const strikes=(dispatch.strikes.get(project)||0)+1;dispatch.strikes.set(project,strikes);
      const max=e.quotaKind==='temporary'?4:e.quotaKind==='unknown'||!e.quotaKind?2:1;

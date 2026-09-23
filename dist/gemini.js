@@ -82,7 +82,7 @@ async function resolveModel({key,model,automatic=true,fetcher=fetch}){
  const response=await fetcher('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000'+(token?'&pageToken='+encodeURIComponent(token):''),{headers:{'x-goog-api-key':key},signal:controller.signal});
  if(!response.ok){const error=Object.assign(Error('모델 목록 조회 실패 (HTTP '+response.status+'). 키·권한·연결 상태를 확인해주세요.'),{status:response.status});const retry=response.headers?.get('Retry-After');error.retryAfterMs=retry?(Number(retry)*1000||Math.max(0,Date.parse(retry)-Date.now())):60000;throw error;}
  const payload=await response.json();if(!Array.isArray(payload.models))throw Error('모델 목록 응답이 올바르지 않습니다.');models.push(...payload.models);token=payload.nextPageToken;if(!token)return chooseModel(models);
- }throw Error('모델 목록이 너무 길어 자동 선택을 완료하지 못했습니다.');}catch(e){if(e.name==='AbortError')throw Error('모델 목록 조회 시간 초과. 다시 시작해주세요.');throw e;}finally{clearTimeout(timer);}
+ }throw Error('모델 목록이 너무 길어 자동 선택을 완료하지 못했습니다.');}catch(e){if(e.name==='AbortError')throw Object.assign(Error('모델 목록 조회 시간 초과.'),{code:'AI_TRANSIENT'});if(e instanceof TypeError)throw Object.assign(Error('모델 목록 조회 중 네트워크 연결 오류.'),{code:'AI_TRANSIENT'});throw e;}finally{clearTimeout(timer);}
 }
 const api={excludeInvalidCandidates,check,validateResult,testConnection,parseResponse,responseSchema,chooseModel,resolveModel};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DSGemini=api;
 })(typeof window==='undefined'?globalThis:window);

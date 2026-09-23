@@ -11,7 +11,7 @@ test('ETA rotation requires a measured long estimate and respects the one-minute
  const {pool,dispatch,rotate,advance}=setup();
  for(const input of [{etaSeconds:3600},{etaSeconds:0},{etaSeconds:null},{etaSeconds:NaN},{elapsedMs:29999}])assert.equal(rotate(input),null);
  assert.deepEqual(rotate(),{from:'project-slow',to:'project-spare'});
- assert.equal(dispatch.deferred.get('project-slow'),500000);
+ assert(dispatch.retired.has('project-slow'));
  assert.equal(dispatch.preferred,'project-spare');assert.equal(dispatch.lastRotationAt,200000);
  advance(61000);assert.equal(rotate(),null,'pending replacement must be assigned before another rotation');
  dispatch.preferred=null;dispatch.lastRotationAt=260000;
@@ -22,7 +22,7 @@ test('rotation considers request duration plus adaptive pacing and prefers an un
  sample('slow',1000);sample('fast',30000);
  pool.adaptivePacing.set('project-slow',{floor:4500,paceMs:60000,successes:0});
  assert.deepEqual(rotate(),{from:'project-slow',to:'project-spare'});
- assert(!dispatch.retired.has('project-slow'),'slow service is deferred, not a quota failure');
+ assert(dispatch.retired.has('project-slow'),'slow service is excluded for the rest of this run');
  assert.equal(dispatch.strikes.size,0);
 });
 test('rotation ignores stale idle measurements but can rotate a currently running slow project',()=>{
@@ -38,15 +38,14 @@ test('same-project duplicate keys are not alternative capacity',()=>{
  const dispatch=pool.createDispatch();dispatch.used.add('project-one');dispatch.stats.set('project-one',{durationMs:90000,lastAt:200000});
  assert.equal(pool.rotateSlow(dispatch,{etaSeconds:7200,elapsedMs:60000,now:200000}),null);
 });
-test('rotation cannot choose an invalid, busy, quota-blocked, retired, paced or deferred spare',()=>{
+test('rotation cannot choose an invalid, busy, quota-blocked, retired or paced spare',()=>{
  const exclusions=[
   (p,d)=>p.keys.filter(k=>k.project!=='project-slow').forEach(k=>k.status='invalid'),
   (p,d)=>['fast','spare'].forEach(n=>p.runningProjects.add('project-'+n)),
   (p,d)=>{p.projects.set('project-fast',{kind:'daily',retryAt:0});p.projects.set('project-spare',{kind:'unavailable',retryAt:0});},
   (p,d)=>['fast','spare'].forEach(n=>d.retired.add('project-'+n)),
   (p,d)=>['fast','spare'].forEach(n=>p.projects.set('project-'+n,{kind:'temporary',retryAt:260000})),
-  (p,d)=>['fast','spare'].forEach(n=>p.nextRequest.set('project-'+n,260000)),
-  (p,d)=>['fast','spare'].forEach(n=>d.deferred.set('project-'+n,260000))
+  (p,d)=>['fast','spare'].forEach(n=>p.nextRequest.set('project-'+n,260000))
  ];
  for(const exclude of exclusions){const {pool,dispatch,rotate}=setup();exclude(pool,dispatch);assert.equal(rotate(),null);assert.equal(dispatch.lastRotationAt,null);}
 });
@@ -76,4 +75,15 @@ test('a preferred replacement never overrides its provider cooldown',async()=>{
  const {pool,dispatch,rotate,now,advance}=setup();rotate();pool.nextRequest.set('project-spare',now()+60000);let waits=0;
  const value=await pool.executeAny(async(key,project)=>project,{dispatch,now,wait:async ms=>{waits++;advance(ms);}});
  assert.equal(value,'project-fast');assert.equal(waits,0);assert.equal(dispatch.preferred,'project-spare');
+});
+test('rotated project stays excluded after five and ten minutes, but a new run can use it',async()=>{
+ const {pool,dispatch,rotate,now,advance}=setup();rotate();
+ for(const elapsed of [300000,300000]){
+  advance(elapsed);
+  const project=await pool.executeAny(async(key,p)=>p,{dispatch,now,wait:async ms=>advance(ms)});
+  assert.notEqual(project,'project-slow');assert(dispatch.retired.has('project-slow'));
+ }
+ dispatch.retired.add('project-fast');dispatch.retired.add('project-spare');
+ await assert.rejects(()=>pool.executeAny(async()=>assert.fail('retired projects must not be requested'),{dispatch,now}),/사용할 수 있는 프로젝트가 없습니다/);
+ assert.equal(await pool.executeAny(async(key,p)=>p,{dispatch:pool.createDispatch(),now}),'project-slow');
 });
