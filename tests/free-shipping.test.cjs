@@ -15,15 +15,26 @@ test('Gmarket/Auction 24-column free-shipping input preserves every non-target f
  assert.deepEqual(DS.exportRows(t,DS.analyze(t,options)),out);
 });
 
-test('free-shipping 11-column copy keeps blank rows, original image, zero return fee and approved names aligned',()=>{
+test('free-shipping 14-column copy keeps blank rows, original image, zero return fee and approved names aligned',()=>{
  const t=table([record(),Array(24).fill(''),record({'상품코드':'0000456','반품배송비':'0'})]);let rows=DS.analyze(t,options);
  rows[0]=DS.applyKeywordReview(rows[0],[{keyword:'정리용',status:'no_obvious_issue',reason:'용도',afterWord:1}],'ai');
  rows[0]=DS.approve(rows[0],rows[0].proposed,'',options.terms);
- assert.deepEqual(DS.copyHeaders(t),copyHeaders);assert.deepEqual(DS.FREE_COPY_HEADERS,copyHeaders);
- const block=DS.exportBlock(t,rows);assert.equal(block.length,3);assert(block.every(row=>row.length===11));
+ assert.deepEqual(DS.copyHeaders(t),headers.slice(8,22));assert.deepEqual(DS.FREE_COPY_HEADERS,copyHeaders);
+ const block=DS.exportBlock(t,rows);assert.equal(block.length,3);assert(block.every(row=>row.length===14));
  assert.equal(block[0][0],'주방 정리용 수납함');assert.equal(block[0][1],'001200');assert.equal(block[0][3],'https://example.com/list.jpg');assert.equal(block[0][10],'3500');
- assert.deepEqual(block[1],Array(11).fill(''));assert.equal(block[2][10],'0');
+ assert.deepEqual(block[1],Array(14).fill(''));assert.equal(block[2][10],'0');
+ assert.equal(block[0][11],t.rows[0][19]);assert.deepEqual(block[0].slice(12),['0','1200']);
  assert.deepEqual(DS.parseTSV(DS.stringify(block)),block);
+});
+
+test('unified copy includes intervening fields through the last discount column and falls back when absent',()=>{
+ const names=[...headers.slice(0,21),'중간 메모',...headers.slice(21)],values=names.map(h=>h==='중간 메모'?'원본\t메모':record()[headers.indexOf(h)]),t=DS.tableFrom(DS.stringify([names,values]));
+ const rows=DS.analyze(t,options),out=DS.exportBlock(t,rows);
+ assert.equal(out[0].length,15);assert.equal(out[0][13],'원본\t메모');assert.equal(out[0][14],'1200');assert.equal(out[0][12],'0');
+ const narrow=headers.filter(h=>!['판매자 부담 할인','할인 적용가'].includes(h)),fallback=DS.tableFrom(DS.stringify([narrow,narrow.map(h=>record()[headers.indexOf(h)])]));
+ assert.deepEqual(DS.copyHeaders(fallback),copyHeaders);assert.equal(DS.exportBlock(fallback,DS.analyze(fallback,options))[0].length,11);
+ const paid=DS.tableFrom(DS.stringify([DS.HEADERS,DS.HEADERS.map(h=>({'상품명':'바구니','가격':'1500','판매자 부담 할인':'1%','배송비':'3000','반품배송비':'0','판매시작일':'2026-09-23','판매종료일':'2099-12-31','배송타입':'원본 타입'}[h]||''))]));
+ const paidOut=DS.exportBlock(paid,DS.analyze(paid,options))[0];assert.equal(paidOut[18],'0');for(const h of ['판매시작일','판매종료일','배송타입'])assert.equal(paidOut[DS.copyHeaders(paid).indexOf(h)],paid.rows[0][paid.names.indexOf(h)]);
 });
 
 test('free-shipping work checkpoint restores approved review and 24 original columns without adding return fee twice',()=>{
@@ -45,7 +56,7 @@ test('free-shipping input still rejects missing required fields, duplicated head
 
 test('copy layout selects only the exact supported contiguous 13- or 11-column blocks',()=>{
  const paidRow=DS.HEADERS.map(h=>({'상품코드':'001','상품명':'수납함','키워드':'정리용','배송비':'3000','반품배송비':'0'}[h]||'')),paid=DS.tableFrom(DS.stringify([DS.HEADERS,paidRow]));
- assert.deepEqual(DS.copyHeaders(paid),DS.COPY_HEADERS);const paidBlock=DS.exportBlock(paid,DS.analyze(paid,options));assert.equal(paidBlock[0].length,13);assert.equal(paidBlock[0][11],'3500');assert.equal(paidBlock[0][12],'0');
+ assert.deepEqual(DS.copyHeaders(paid),DS.HEADERS.slice(8,27));const paidBlock=DS.exportBlock(paid,DS.analyze(paid,options));assert.equal(paidBlock[0].length,19);assert.equal(paidBlock[0][11],'3500');assert.equal(paidBlock[0][12],'0');
  for(const altered of [headers.map(h=>h==='목록 이미지'?'대표 이미지':h),[...headers.slice(0,12),'추가 열',...headers.slice(12)],headers.map((h,i)=>i===9?headers[10]:i===10?headers[9]:h)]){
   const t=DS.tableFrom(DS.stringify([altered,altered.map(h=>record()[headers.indexOf(h)]??'별도 값')]));
   assert.deepEqual(DS.copyHeaders(t),[]);assert.throws(()=>DS.exportBlock(t,DS.analyze(t,options)),/열|순서/);
