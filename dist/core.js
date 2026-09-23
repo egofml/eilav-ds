@@ -46,7 +46,22 @@ function exclusionReasons(table,source){
 }
 function modelTokens(title,clean){return [...new Set((title.match(/(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*(?:[-_/][A-Za-z0-9]+)*(?![A-Za-z0-9])/g)||[]).filter(t=>/\d/.test(t)&&clean(t).removed.length))];}
 function preserved(row){return row.status!=='approved'&&!!(row.titleHold||row.applyError||row.status==='held');}
-function effectiveTitle(row){return row.status==='approved'?row.approvedName:preserved(row)?row.original:row.cleaned;}
+function rawTitle(row){return row.status==='approved'?row.approvedName:preserved(row)?row.original:row.cleaned;}
+// ESM uses Korean 2 / ASCII 1, not UTF-8. Other UTF-16 units count as 2 conservatively.
+function esmBytes(value){return String(value??'').split('').reduce((n,c)=>n+(c.charCodeAt(0)<=127?1:2),0);}
+function titleLimit(row,rule=row.titleRule){
+ let title=rawTitle(row)||'',adjusted=false;const extra=0;
+ if(rule?.enabled&&esmBytes(title)+extra>100&&!preserved(row)&&!row.exclusion?.length&&row.status==='approved'&&!row.manualReview&&title===row.proposed){
+  const base=row.spacingTitle||row.cleaned,checks=(row.keywordChecks||[]).filter(c=>c.status==='no_obvious_issue'&&Number.isInteger(c.afterWord));
+  // Only remove known AI insertions. Never cut a model number, size, or original word.
+  if(checks.length<=3&&placeAIKeywords(base,checks)===title){
+   let best=null,bestCount=-1;for(let mask=0;mask<(1<<checks.length);mask++){const chosen=checks.filter((c,i)=>mask&(1<<i)),candidate=placeAIKeywords(base,chosen);if(chosen.length>bestCount&&esmBytes(candidate)+extra<=100){best=candidate;bestCount=chosen.length;}}
+   if(best!==null){title=best;adjusted=true;}
+  }
+ }
+ const bytes=esmBytes(title)+extra;return {title,bytes,adjusted,over:!!rule?.enabled&&!row.blank&&bytes>100};
+}
+function effectiveTitle(row){return titleLimit(row).title;}
 function lowPriceDiscount(source,output,ix){
  const priceIndex=ix['가격'],discountIndex=ix['판매자 부담 할인'],finalIndex=ix['할인 적용가'];
  if(discountIndex===undefined)return null;
@@ -73,7 +88,7 @@ function analyze(table,options){const count=options.keywordCount??1;if(!Number.i
  const removed=[...new Set([...titleResult.removed,...cleanedKeywords.flatMap(k=>k.removed)])];
  const protectedModels=modelTokens(before,clean),titleHold=protectedModels.length?'모델명 내부 금지어 확인: '+protectedModels.join(', '):/^[=+\-@]/.test(titleResult.value.trim())?'금지어 제거 후 수식 시작 문자 발생':'';
  return{index:i,source,output,discount,blank:false,code:source[ix['상품코드']],original:before,cleaned:titleResult.value,proposed,keyword,candidates,candidateReason,keywordChecks:[],excludedKeywords:[],keywords,removed,issues,protectedModels,titleHold,status:proposed!==titleResult.value||options.position==='ai'&&candidates.length?'pending':'cleaned',empty:!titleResult.value.trim(),evidence:''};
- });}
+ }).map(row=>({...row,titleRule:options.titleRule}));}
 function approve(row,name,evidence,terms,matcher,manualReview=false){if(row.titleHold&&!manualReview)throw Error('원본 유지 중입니다. 개별 검토에서 확인 후 적용해주세요.');if(row.exclusion?.length)throw Error("삭제 필요 검토 대상은 상품명 수정에서 제외됩니다.");const clean=matcher||makeMatcher(terms);if(!name.trim())throw Error('상품명은 비울 수 없습니다.');if(name.length>200)throw Error('상품명은 200자 이내로 입력해주세요.');const validationName=manualReview&&row.protectedModels?.length?name.replace(/(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*(?:[-_/][A-Za-z0-9]+)*(?![A-Za-z0-9])/g,t=>row.protectedModels.some(m=>normalize(m)===normalize(t))?'':t):name;if(clean(validationName).removed.length)throw Error('금지어가 남아 있습니다. 제거 후 승인해주세요.');if((row.excludedKeywords||[]).some(k=>normalize(name).includes(normalize(k))))throw Error('의심 또는 확인 필요로 분류된 추가 키워드는 이름에 넣을 수 없습니다.');if(/^[=+\-@]/.test(name.trim()))throw Error('수식으로 해석될 수 있는 시작 문자를 제거해주세요.');return{...row,approvedName:name.trim(),applyError:undefined,manualReview,status:'approved',evidence,reviewedAt:new Date().toISOString(),empty:false};}
 function readyToApply(row){return !row.blank&&!row.titleHold&&!row.exclusion?.length&&row.status==='pending'&&!row.empty&&!row.aiError&&row.candidates.length>0&&row.keywordChecks.length===row.candidates.length&&row.candidates.every(k=>row.keywordChecks.filter(c=>c.keyword===k).length===1);}
 function approveBatch(rows,terms){const matcher=makeMatcher(terms),approved=[],failures=[];for(const row of rows){if(!readyToApply(row))continue;try{approved.push(approve(row,row.proposed,'일괄 적용',terms,matcher));}catch(error){failures.push({index:row.index,message:error.message});}}return {approved,failures};}
@@ -81,6 +96,6 @@ const COPY_HEADERS='상품명\t가격\t오너클랜 판매가격\t대표 이미�
 const FREE_COPY_HEADERS='상품명\t가격\t오너클랜 판매가격\t목록 이미지\t키워드\t제조사\t원산지\t면세\t카테고리\t성인전용 상품\t반품배송비'.split('\t');
 function copyHeaders(table){if(!table)return [];const start=table.names.indexOf('상품명'),base=[COPY_HEADERS,FREE_COPY_HEADERS].find(headers=>start>=0&&headers.every((name,i)=>table.names[start+i]===name));if(!base)return [];const end=Math.max(start+base.length-1,table.names.indexOf('판매자 부담 할인'),table.names.indexOf('할인 적용가'));return table.names.slice(start,end+1);}
 function exportBlock(table,rows){const headers=copyHeaders(table),start=table.names.indexOf('상품명');if(!headers.length)throw Error('상품명부터 반품배송비까지 기존 양식 13개 열 또는 무료배송 양식 11개 열이 원본 순서로 연속되어 있어야 합니다.');return exportRows(table,rows).map(row=>row.slice(start,start+headers.length));}
-function exportRows(table,rows){const title=table.names.indexOf('상품명');return rows.map(row=>{const result=(preserved(row)?row.source:row.output).slice();if(row.status==='approved')result[title]=row.approvedName;return result;});}
-const api={discountHeaders,exportDiscount,preserved,effectiveTitle,readyToApply,approveBatch,spacingEligible,checkedSpacing,exclusionReasons,HEADERS,COPY_HEADERS,FREE_COPY_HEADERS,copyHeaders,exportBlock,parseTSV,stringify,tableFrom,normalize,termsFrom,makeMatcher,fee,placeKeywords,placeAIKeywords,applyKeywordReview,analyze,approve,exportRows};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DS=api;
+function exportRows(table,rows){const title=table.names.indexOf('상품명');return rows.map(row=>{const result=(preserved(row)?row.source:row.output).slice();if(!row.blank&&!row.exclusion?.length&&!preserved(row))result[title]=effectiveTitle(row);return result;});}
+const api={esmBytes,titleLimit,discountHeaders,exportDiscount,preserved,effectiveTitle,readyToApply,approveBatch,spacingEligible,checkedSpacing,exclusionReasons,HEADERS,COPY_HEADERS,FREE_COPY_HEADERS,copyHeaders,exportBlock,parseTSV,stringify,tableFrom,normalize,termsFrom,makeMatcher,fee,placeKeywords,placeAIKeywords,applyKeywordReview,analyze,approve,exportRows};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DS=api;
 })(typeof window==='undefined'?globalThis:window);
