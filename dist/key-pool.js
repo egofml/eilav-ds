@@ -64,6 +64,7 @@ class KeyPool {
    try{return await this.executeProject(project,async key=>{dispatch.used.add(project);if(dispatch.preferred===project)dispatch.preferred=null;const started=now();try{return await request(key,project);}finally{dispatch.stats.set(project,{durationMs:Math.max(0,now()-started),lastAt:now()});}},{...options,quotaRetries:0,stopped,wait,now,onWait:state=>onProject(project,state)});}
    catch(e){
     if(stopped()||!fallback)throw e;
+    if(e.code==='AI_MODEL_SWITCH'){onProject(project,e.message);continue;}
     if(e.code==='AI_TRANSIENT'||[500,502,503,504].includes(e.status)){dispatch.retired.add(project);onProject(project,'연결·서버 오류'+(e.status?' HTTP '+e.status:' · 연결 또는 응답 시간 초과')+' · 이번 실행 제외, 다음 프로젝트로 전환');continue;}
     if(e.status===429){
      const strikes=(dispatch.strikes.get(project)||0)+1;dispatch.strikes.set(project,strikes);

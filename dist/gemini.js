@@ -70,19 +70,20 @@ async function testConnection({key,model,fetcher=fetch,onUsage=()=>{}}){
  await check({key,model,fetcher,onUsage,items:[{id:0,title:'주방 수납 바구니',candidates:['정리용'],brand:'',category:'주방 수납'}]});
  return {model,elapsedMs:Date.now()-started};
 }
-function chooseModel(models){
+function modelChoices(models){
  const eligible=models.flatMap(m=>{const id=(m.name||'').replace(/^models\//,'');const match=id.match(/^gemini-(\d+(?:\.\d+)?)-flash(-lite)?(?:-(\d{3}))?$/);return match&&m.supportedGenerationMethods?.includes('generateContent')&&(!m.outputTokenLimit||m.outputTokenLimit>=8192)?[{id,lite:!!match[2],version:Number(match[1]),revision:Number(match[3]||0)}]:[];});
  eligible.sort((a,b)=>Number(b.lite)-Number(a.lite)||b.version-a.version||b.revision-a.revision||a.id.localeCompare(b.id));
- if(!eligible.length)throw Error('자동 선택 가능한 안정 버전 Flash 모델이 없습니다. 자동 선택을 해제하고 모델 ID를 직접 입력해주세요.');return eligible[0].id;
+ if(!eligible.length)throw Error('자동 선택 가능한 안정 버전 Flash 모델이 없습니다. 자동 선택을 해제하고 모델 ID를 직접 입력해주세요.');return [...new Set(eligible.map(m=>m.id))];
 }
-async function resolveModel({key,model,automatic=true,fetcher=fetch}){
- if(!automatic)return model;
+function chooseModel(models){return modelChoices(models)[0];}
+async function resolveModel({key,model,automatic=true,fetcher=fetch}){if(!automatic)return model;return (await listModels({key,fetcher}))[0];}
+async function listModels({key,fetcher=fetch}){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);const models=[];let token='';
  try{for(let page=0;page<10;page++){
  const response=await fetcher('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000'+(token?'&pageToken='+encodeURIComponent(token):''),{headers:{'x-goog-api-key':key},signal:controller.signal});
  if(!response.ok){const error=Object.assign(Error('모델 목록 조회 실패 (HTTP '+response.status+'). 키·권한·연결 상태를 확인해주세요.'),{status:response.status});const retry=response.headers?.get('Retry-After');error.retryAfterMs=retry?(Number(retry)*1000||Math.max(0,Date.parse(retry)-Date.now())):60000;throw error;}
- const payload=await response.json();if(!Array.isArray(payload.models))throw Error('모델 목록 응답이 올바르지 않습니다.');models.push(...payload.models);token=payload.nextPageToken;if(!token)return chooseModel(models);
+ const payload=await response.json();if(!Array.isArray(payload.models))throw Error('모델 목록 응답이 올바르지 않습니다.');models.push(...payload.models);token=payload.nextPageToken;if(!token)return modelChoices(models);
  }throw Error('모델 목록이 너무 길어 자동 선택을 완료하지 못했습니다.');}catch(e){if(e.name==='AbortError')throw Object.assign(Error('모델 목록 조회 시간 초과.'),{code:'AI_TRANSIENT'});if(e instanceof TypeError)throw Object.assign(Error('모델 목록 조회 중 네트워크 연결 오류.'),{code:'AI_TRANSIENT'});throw e;}finally{clearTimeout(timer);}
 }
-const api={excludeInvalidCandidates,check,validateResult,testConnection,parseResponse,responseSchema,chooseModel,resolveModel};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DSGemini=api;
+const api={modelChoices,listModels,excludeInvalidCandidates,check,validateResult,testConnection,parseResponse,responseSchema,chooseModel,resolveModel};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DSGemini=api;
 })(typeof window==='undefined'?globalThis:window);
