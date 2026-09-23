@@ -34,7 +34,7 @@ async function parallel(options){
   onWorker(worker,'완료 또는 대기 종료');
  }));
  if(!valid())throw Error('표나 규칙이 변경되어 병렬 검토를 중지했습니다.');
- return {completed,failed,remaining:items.length-settled.size,stopped:stopped()||halt||settled.size<items.length,errors};
+ return {completed,failed,remaining:items.length-settled.size,stopped:stopped()||halt||settled.size<items.length,userStopped:!!stopped(),errors};
 }
 const api={pending,run,parallel};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.DSBatch=api;
 })(typeof window==='undefined'?globalThis:window);

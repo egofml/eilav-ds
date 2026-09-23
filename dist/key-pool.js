@@ -42,7 +42,7 @@ class KeyPool {
  }finally{this.runningProjects.delete(project);this.busy=this.runningProjects.size>0;}
  }
 
- createDispatch(){return {retired:new Set(),strikes:new Map(),used:new Set(),stats:new Map(),preferred:null,lastRotationAt:null};}
+ createDispatch(){return {retired:new Set(),reasons:new Map(),strikes:new Map(),used:new Set(),stats:new Map(),preferred:null,lastRotationAt:null};}
  rotateSlow(dispatch,{etaSeconds,elapsedMs,now=Date.now()}){
   if(!(etaSeconds>3600)||elapsedMs<30000||dispatch.preferred||dispatch.lastRotationAt!==null&&now-dispatch.lastRotationAt<60000)return null;
   const eligible=[...new Set(this.keys.filter(k=>k.status!=='invalid'&&!dispatch.retired.has(k.project)&&!['daily','unavailable'].includes(this.projects.get(k.project)?.kind)).map(k=>k.project))];
@@ -55,7 +55,7 @@ class KeyPool {
  async executeAny(request,{dispatch=this.createDispatch(),fallback=true,stopped=()=>false,onProject=()=>{},wait=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now,...options}={}){
   while(!stopped()){
    const candidates=[...new Set(this.keys.filter(k=>k.status!=='invalid'&&!dispatch.retired.has(k.project)&&!['daily','unavailable'].includes(this.projects.get(k.project)?.kind)).map(k=>k.project))];
-   if(!candidates.length)throw Error('이번 실행에서 사용할 수 있는 프로젝트가 없습니다. 완료 결과는 유지됩니다.');
+   if(!candidates.length)throw Error('이번 실행에서 사용할 수 있는 프로젝트가 없습니다. 완료 결과는 유지됩니다.'+([...new Set(dispatch.reasons.values())].slice(0,2).join(' / ')||''));
    const at=now(),readyAt=p=>Math.max(this.projects.get(p)?.retryAt||0,this.nextRequest.get(p)||0);
    const free=candidates.filter(p=>!this.runningProjects.has(p)).sort((a,b)=>Math.max(0,readyAt(a)-at)-Math.max(0,readyAt(b)-at)||Number(b===dispatch.preferred)-Number(a===dispatch.preferred));
    const project=free[0],remaining=project?readyAt(project)-at:1000;
@@ -65,6 +65,7 @@ class KeyPool {
    catch(e){
     if(stopped()||!fallback)throw e;
     if(e.code==='AI_MODEL_SWITCH'){onProject(project,e.message);continue;}
+    if(e.code==='AI_MODELS_UNAVAILABLE'){dispatch.retired.add(project);dispatch.reasons.set(project,e.message);onProject(project,'대체 모델 없음 · 다른 프로젝트 확인');continue;}
     if(e.code==='AI_TRANSIENT'||[500,502,503,504].includes(e.status)){dispatch.retired.add(project);onProject(project,'연결·서버 오류'+(e.status?' HTTP '+e.status:' · 연결 또는 응답 시간 초과')+' · 이번 실행 제외, 다음 프로젝트로 전환');continue;}
     if(e.status===429){
      const strikes=(dispatch.strikes.get(project)||0)+1;dispatch.strikes.set(project,strikes);

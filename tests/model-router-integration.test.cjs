@@ -22,7 +22,7 @@ test('parallel common-model 503 recovers on another model with no duplicate rows
  });
  assert.equal(result.completed,200);assert.equal(result.remaining,0);assert.equal(result.stopped,false);assert.equal(result.errors.length,0);
  assert.equal(env.applied.length,200);assert.equal(new Set(env.applied).size,200);assert.equal(peak,4);
- assert(calls.filter(call=>call.model===A).length<=4,'only already in-flight requests may hit the failed model');
+ assert(calls.filter(call=>call.model===A).length<=5,'confirmation permits a second failure before globally blocking');
  assert(calls.some(call=>call.model===B));assert.equal(env.dispatch.retired.size,0);assert.equal(env.pool.projects.size,0);
  assert(env.pool.summary().every(key=>key.status==='ready'));
  for(const project of new Set(calls.map(call=>call.project))){const starts=calls.filter(call=>call.project===project).map(call=>call.at);for(let i=1;i<starts.length;i++)assert(starts[i]-starts[i-1]>=4500,'model switch preserves project start spacing');}
@@ -34,9 +34,9 @@ test('same-project fallback waits the normal 4.5 second interval before a second
 });
 test('all model failures terminate a parallel run finitely and preserve every unprocessed row',async()=>{
  const env=setup();let calls=0;
- const result=await env.run(async()=>{assert(++calls<=8,'at most four in-flight requests for each of two failed models');await tick();throw Object.assign(Error('overloaded'),{status:503});});
+ const result=await env.run(async()=>{assert(++calls<=20,'each project/model pair is attempted at most once');await tick();throw Object.assign(Error('overloaded'),{status:503});});
  assert.equal(result.completed,0);assert.equal(result.remaining,200);assert.equal(result.stopped,true);assert.equal(env.applied.length,0);
- assert.equal(env.dispatch.retired.size,0,'model outage does not falsely mark all API keys failed');assert.equal(env.pool.projects.size,0);
+ assert.equal(env.dispatch.retired.size,10,'only this run is exhausted');assert(env.pool.summary().every(k=>k.status==='ready'),'keys are not persistently invalidated');assert.equal(env.pool.projects.size,0);
  assert(result.errors.length>0);assert(result.errors.every(error=>/모델/.test(error.message)));assert.equal(env.pool.busy,false);
 });
 test('429 is handled as a project quota failure without changing or globally blocking the model',async()=>{
@@ -44,4 +44,13 @@ test('429 is handled as a project quota failure without changing or globally blo
  const result=await env.run(async call=>{calls.push(call);await tick();if(call.project==='project-0')throw Object.assign(Error('daily quota'),{status:429,quotaKind:'daily'});return call.batch;},Array.from({length:40},(_,id)=>({id})));
  assert.equal(result.completed,40);assert.equal(new Set(env.applied).size,40);assert(calls.every(call=>call.model===A));
  assert.equal(env.router.blocked.size,0);assert.equal(env.pool.projects.get('project-0').kind,'daily');assert(env.dispatch.retired.has('project-0'));assert(!env.dispatch.retired.has('project-1'));
+});
+
+test('one exhausted project hands work to healthy projects instead of losing the worker',async()=>{
+ const env=setup(6),calls=[];
+ const result=await env.run(async call=>{calls.push(call);await tick();if(call.project==='project-0')throw Object.assign(Error('project service failure'),{status:503});return call.batch;});
+ assert.equal(result.completed,200);assert.equal(result.stopped,false);assert.equal(new Set(env.applied).size,200);
+ assert(env.dispatch.retired.has('project-0'));assert.equal(env.dispatch.retired.size,1);
+ assert.deepEqual(calls.filter(c=>c.project==='project-0').map(c=>c.model),[A,B]);
+ assert.equal(env.router.blocked.size,0);assert(calls.some(c=>c.project!=='project-0'&&c.model===A));
 });
